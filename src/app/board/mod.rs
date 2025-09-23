@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use eframe::egui::{self, Align2, Color32, FontId, Grid, Label, Rect, Sense, Widget};
+use eframe::egui::{self, Align2, Color32, FontId, Grid, Rect, Sense, Widget};
 
 pub mod piece;
 pub use piece::{Piece, PieceColor, PieceTextures};
@@ -8,7 +8,7 @@ pub use piece::{Piece, PieceColor, PieceTextures};
 use crate::app::board::piece::PieceType;
 
 #[derive(Clone)]
-pub struct BoardState {
+pub struct Board {
     pub pieces: HashMap<(usize, usize), Piece>,
     pub piece_graveyard: Vec<Piece>,
     pub textures: PieceTextures,
@@ -16,7 +16,7 @@ pub struct BoardState {
     pub selected_piece: Option<SelectedPiece>,
 }
 
-impl BoardState {
+impl Board {
     pub fn new() -> Self {
         //read the string from the assets/boards/starter.txt file
         let path = "assets/boards/starter.txt";
@@ -34,14 +34,16 @@ impl BoardState {
         a
     }
 
+
     pub fn fill_all_targets(&mut self) -> Self {
         let board_copy = self.clone();
 
         for piece in self.pieces.values_mut() {
-            piece.targets = Piece::find_targets(piece.clone(), &board_copy);
+            piece.targets = Piece::find_targets(piece.clone(), board_copy.clone());
         }
         self.clone()
     }
+
 
     pub fn generate_from_notation(notation: &str) -> HashMap<(usize, usize), Piece> {
         //parse the notation string and generate pieces
@@ -84,16 +86,46 @@ impl BoardState {
             .collect();
         pieces
     }
+
+
+    fn is_in_check(self, color: PieceColor) -> bool{
+        //check if this color's king is being targeted by any opponent pieces
+        for piece in self.pieces.values() {
+            if piece.color != color {
+                let targets = piece.clone().find_targets(self.clone());
+                for t in targets {
+                    if t.contains("+"){
+                        return true;
+                    }
+                }
+            }
+        }
+
+        return false;
+    }
+
+    fn move_causes_self_check(self, notation: String) -> bool{
+        let mut sim_board = self.clone();
+        sim_board.make_move(notation);
+
+        false
+    }
+
+    pub fn make_move(&mut self, notation: String){
+        //make a move on the board
+        let(color, kind, from, to, is_capture, is_check) = Piece::parse_move_notation(notation);
+    }
+
 }
 
 /// A widget that renders the chess board with rank/file labels and handles square clicks.
 pub struct BoardWidget<'a> {
-    state: &'a mut BoardState,
+    state: &'a mut Board,
     square_size: f32,
 }
 
 impl<'a> BoardWidget<'a> {
-    pub fn new(state: &'a mut BoardState) -> Self {
+    pub fn new(state: &'a mut Board) -> Self {
         Self {
             state,
             square_size: 60.0,
@@ -105,6 +137,8 @@ impl<'a> BoardWidget<'a> {
         self.square_size = size;
         self
     }
+
+
 
     fn click_on(&mut self, row: usize, col: usize) {
         if let Some(piece) = self.state.pieces.get(&(col, row)) {
@@ -326,26 +360,7 @@ impl<'a> Widget for BoardWidget<'a> {
                     ui.end_row();
                 });
         });
-        let text;
-        let color;
-        match self.state.turn {
-            GameTurn::WhiteTurn => {
-                text = "White's Turn";
-                color = Color32::WHITE;
-            }
-            GameTurn::BlackTurn => {
-                text = "Black's Turn";
-                color = Color32::BLACK;
-            }
-        };
-
-        ui.painter().text(
-            ui.min_rect().center_top() + egui::vec2(0.0, 10.0),
-            Align2::CENTER_TOP,
-            text,
-            FontId::proportional(20.0),
-            color,
-        );
+        
 
         // Return an overall response that covers the board area (hover-only)
         if let Some(tr) = total_rect {

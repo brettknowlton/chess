@@ -3,13 +3,13 @@ mod theme;
 
 use std::{collections::HashMap, path::PathBuf};
 
-pub use board::{BoardState, BoardWidget};
+pub use board::{Board, BoardWidget};
 use crossbeam::channel::{Receiver, Sender};
 pub use theme::SkeletonTheme;
 
 use eframe::{
     self,
-    egui::{self, Color32, Pos2},
+    egui::{self, Align2, Color32, FontId, Pos2},
 };
 
 use serde;
@@ -35,7 +35,7 @@ pub struct MyApp {
     app_state: AppState,
 
     #[serde(skip)]
-    board_state: Option<BoardState>,
+    board_state: Option<Board>,
 
     first_update: bool,
 
@@ -152,7 +152,7 @@ impl eframe::App for MyApp {
                             ui.heading("Main Menu");
                             if ui.button("New Game").clicked() {
                                 self.app_state = AppState::Playing;
-                                self.board_state = Some(BoardState::new());
+                                self.board_state = Some(Board::new());
                             }
                             if ui.button("Quit").clicked() {
                                 panic!("Quit button clicked"); // Replace with actual quit logic
@@ -186,7 +186,9 @@ impl eframe::App for MyApp {
                         ui.vertical(|ui| {
                             ui.heading("Info");
                             if let Some(board) = &self.board_state {
-                                if let Some(SelectedPiece::Selected(idx, idy)) = &board.selected_piece {
+                                if let Some(SelectedPiece::Selected(idx, idy)) =
+                                    &board.selected_piece
+                                {
                                     let selected = board.pieces.get(&(*idx, *idy)).unwrap();
                                     ui.label(format!(
                                         "Selected Piece: {:?} {:?} at ({}, {})",
@@ -207,8 +209,31 @@ impl eframe::App for MyApp {
                     ui.horizontal(|ui| {
                         ui.centered_and_justified(|ui| {
                             ui.add_space(50.0);
+                            let text;
+                            let (a_color, b_color) = (Color32::WHITE, Color32::BLACK);
+                            match self.board_state.as_ref().unwrap().turn {
+                                board::GameTurn::WhiteTurn => {
+                                    text = "White's Turn";
+                                }
+                                board::GameTurn::BlackTurn => {
+                                    text = "Black's Turn";
+                                }
+                            };
 
-                            ui.label("Chess");
+                            ui.painter().text(
+                                ui.min_rect().center_top() + egui::vec2(0.0, 10.0),
+                                Align2::CENTER_TOP,
+                                text,
+                                FontId::proportional(20.0),
+                                b_color,
+                            );
+                            ui.painter().text(
+                                ui.min_rect().center_top() + egui::vec2(-3.0, 13.0),
+                                Align2::CENTER_TOP,
+                                text,
+                                FontId::proportional(20.0),
+                                a_color,
+                            );
                         });
                     });
                     ui.centered_and_justified(|ui| {
