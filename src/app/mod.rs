@@ -1,19 +1,22 @@
+mod board;
 mod theme;
-mod board_state;
 
 use std::{collections::HashMap, path::PathBuf};
 
+pub use board::{BoardState, BoardWidget};
 use crossbeam::channel::{Receiver, Sender};
 pub use theme::SkeletonTheme;
-pub use board_state::BoardState;
 
 use eframe::{
     self,
-    egui::{Color32, Grid, Pos2},
-    *,
+    egui::{self, Color32, Pos2},
 };
 
 use serde;
+
+use crate::app::board::SelectedPiece;
+
+static mut ID_COUNTER: usize = 0;
 
 #[derive(serde::Deserialize, serde::Serialize, Default)]
 enum AppState {
@@ -62,7 +65,7 @@ impl Default for MyApp {
 
             theme_set: false,
             color_values: HashMap::new(),
-        
+
             available_themes: Vec::new(),
 
             event_sender,
@@ -89,6 +92,13 @@ impl MyApp {
         a
     }
 
+    pub fn next_id() -> usize {
+        unsafe {
+            ID_COUNTER += 1;
+            ID_COUNTER
+        }
+    }
+
     pub fn load_themes(mut self) -> Self {
         //for item in ../../assets/*
         let theme_dir = PathBuf::from("assets/");
@@ -111,7 +121,6 @@ impl MyApp {
         self
     }
 }
-
 
 #[derive(serde::Deserialize, serde::Serialize)]
 pub enum UiEvent {
@@ -136,7 +145,7 @@ impl eframe::App for MyApp {
             AppState::MainMenu => {
                 // Handle main menu updates
                 egui::SidePanel::left("MMenuPanel")
-                    .default_width(100.0)
+                    .default_width(150.0)
                     .resizable(false)
                     .show(ctx, |ui| {
                         ui.vertical_centered(|ui| {
@@ -156,7 +165,7 @@ impl eframe::App for MyApp {
                 // Handle in-game updates
                 //draw assets/images/chessboard.png as background
                 egui::SidePanel::left("InGamePanel")
-                    .default_width(100.0)
+                    .default_width(150.0)
                     .resizable(false)
                     .show(ctx, |ui| {
                         ui.vertical(|ui| {
@@ -169,60 +178,43 @@ impl eframe::App for MyApp {
                             }
                         });
                     });
+
+                egui::SidePanel::right("InfoPanel")
+                    .default_width(150.0)
+                    .resizable(false)
+                    .show(ctx, |ui| {
+                        ui.vertical(|ui| {
+                            ui.heading("Info");
+                            if let Some(board) = &self.board_state {
+                                if let Some(SelectedPiece::Selected(idx, idy)) = &board.selected_piece {
+                                    let selected = board.pieces.get(&(*idx, *idy)).unwrap();
+                                    ui.label(format!(
+                                        "Selected Piece: {:?} {:?} at ({}, {})",
+                                        selected.color,
+                                        selected.piece_type,
+                                        selected.position.0,
+                                        selected.position.1
+                                    ));
+                                }
+                            } else {
+                                ui.label("No piece selected");
+                            }
+                        });
+                    });
+
                 egui::CentralPanel::default().show(ctx, |ui| {
                     //Load images/board.png as background
                     ui.horizontal(|ui| {
                         ui.centered_and_justified(|ui| {
                             ui.add_space(50.0);
 
-                            ui.label("Chess Board");
+                            ui.label("Chess");
                         });
                     });
                     ui.centered_and_justified(|ui| {
-                        Grid::new("chess_grid")
-                            .num_columns(8)
-                            .spacing([0.0, 0.0])
-                            .show(ui, |ui| {
-                                for row in (0..8).rev() {
-                                    for col in 0..8 {
-                                        let is_light_square = (row + col) % 2 == 0;
-                                        let square_color = if is_light_square {
-                                            Color32::from_rgb(240, 217, 181) // Light square color
-                                        } else {
-                                            Color32::from_rgb(181, 136, 99) // Dark square color
-                                        };
-                                        let square_size = 60.0; // Size of each square
-
-                                        let (rect, response) = ui.allocate_exact_size(
-                                            egui::vec2(square_size, square_size),
-                                            egui::Sense::click(),
-                                        );
-
-                                        // Draw the square
-                                        ui.painter().rect_filled(rect, 0.0, square_color);
-
-
-                                        // Draw piece as an overlay using painter and cached textures (no layout impact)
-                                        if let Some(board_state) = &mut self.board_state {
-                                            for piece in &board_state.pieces {
-                                                if piece.position == (col, row) {
-                                                    piece.paint(ui, rect, &mut board_state.textures);
-                                                }
-                                            }
-                                        }
-
-                                        // Handle click events
-                                        if response.clicked() {
-                                            println!(
-                                                "Square clicked: ({}, {})",
-                                                row + 1,
-                                                (b'a' + col as u8) as char
-                                            );
-                                        }
-                                    }
-                                    ui.end_row();
-                                }
-                            });
+                        if let Some(board_state) = &mut self.board_state {
+                            ui.add(BoardWidget::new(board_state));
+                        }
                     });
                 });
             }
