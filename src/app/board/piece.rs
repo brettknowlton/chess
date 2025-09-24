@@ -7,8 +7,7 @@ use eframe::egui::{
 use egui_extras::image::load_image_bytes;
 
 use crate::{
-    MyApp,
-    app::board::{self, piece},
+    app::board::{self, MoveNotation},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -16,7 +15,7 @@ pub struct Piece {
     pub piece_type: PieceType,
     pub color: PieceColor,
     pub position: (usize, usize), // (file, rank)
-    pub targets: Vec<String>,     //possible target squares
+    pub targets: Vec<MoveNotation>,     //possible target squares
 }
 
 impl Piece {
@@ -70,7 +69,7 @@ impl Piece {
         }
     }
 
-    pub fn find_targets(self, board: board::Board) -> Vec<String> {
+    pub fn find_targets(self, board: board::Board) -> Vec<MoveNotation> {
         //find possible target squares for this piece
         let direction: isize = match self.color {
             PieceColor::White => 1,
@@ -88,7 +87,7 @@ impl Piece {
                     if board.pieces.get(&(file, forward_rank)).is_none() {
                         //only add forward move if square is empty
                         let tg = (file, forward_rank);
-                        targets.push(self.target_as_notation(tg, false, board.test_check(self.color, tg)));
+                        targets.push(MoveNotation::from_target(&self, tg, &board));
                     }
                     //initial double move
                     if (self.color == PieceColor::White && rank == 1)
@@ -100,7 +99,7 @@ impl Piece {
                         {
                             //only add forward move if square is empty
                             let tg = (file, double_forward_rank);
-                            targets.push(self.target_as_notation(tg, false, false));
+                            targets.push(MoveNotation::from_target(&self, tg, &board));
                         }
                     }
                 }
@@ -110,7 +109,7 @@ impl Piece {
                     if let Some(seen_piece) = board.pieces.get(&(file - 1, forward_rank)) {
                         if seen_piece.color != self.color {
                             let tg = (file - 1, forward_rank);
-                            targets.push(self.target_as_notation(tg, true, false));
+                            targets.push(MoveNotation::from_target(&self, tg, &board));
                         }
                     }
                 }
@@ -118,7 +117,7 @@ impl Piece {
                     if let Some(seen_piece) = board.pieces.get(&(file + 1, forward_rank)) {
                         if seen_piece.color != self.color {
                             let tg = (file + 1, forward_rank);
-                            targets.push(self.target_as_notation(tg, true, false));
+                            targets.push(MoveNotation::from_target(&self, tg, &board));
                         }
                     }
                 }
@@ -147,11 +146,11 @@ impl Piece {
                         {
                             if seen_piece.color != self.color {
                                 let tg = (target_file as usize, target_rank as usize);
-                                targets.push(self.target_as_notation(tg, true, false));
+                                targets.push(MoveNotation::from_target(&self, tg, &board));
                             }
                         } else {
                             let tg = (target_file as usize, target_rank as usize);
-                            targets.push(self.target_as_notation(tg, false, false));
+                            targets.push(MoveNotation::from_target(&self, tg, &board));
                         }
                     }
                 }
@@ -176,12 +175,12 @@ impl Piece {
                         if let Some(seen_piece) = board.pieces.get(&target_pos) {
                             if seen_piece.color != self.color {
                                 let tg = (target_file as usize, target_rank as usize);
-                                targets.push(self.target_as_notation(tg, true, false));
+                                targets.push(MoveNotation::from_target(&self, tg, &board));
                             }
                             break; //blocked by any piece
                         } else {
                             let tg = (target_file as usize, target_rank as usize);
-                            targets.push(self.target_as_notation(tg, false, false));
+                            targets.push(MoveNotation::from_target(&self, tg, &board));
                         }
                         step += 1;
                     }
@@ -207,12 +206,12 @@ impl Piece {
                         if let Some(seen_piece) = board.pieces.get(&target_pos) {
                             if seen_piece.color != self.color {
                                 let tg = (target_file as usize, target_rank as usize);
-                                targets.push(self.target_as_notation(tg, true, false));
+                                targets.push(MoveNotation::from_target(&self, tg, &board));
                             }
                             break; //blocked by any piece
                         } else {
                             let tg = (target_file as usize, target_rank as usize);
-                            targets.push(self.target_as_notation(tg, false, false));
+                            targets.push(MoveNotation::from_target(&self, tg, &board));
                         }
                         step += 1;
                     }
@@ -247,12 +246,12 @@ impl Piece {
                         if let Some(seen_piece) = board.pieces.get(&target_pos) {
                             if seen_piece.color != self.color {
                                 let tg = (target_file as usize, target_rank as usize);
-                                targets.push(self.target_as_notation(tg, true, false));
+                                targets.push(MoveNotation::from_target(&self, tg, &board));
                             }
                             break; //blocked by any piece
                         } else {
                             let tg = (target_file as usize, target_rank as usize);
-                            targets.push(self.target_as_notation(tg, false, false));
+                            targets.push(MoveNotation::from_target(&self, tg, &board));
                         }
                         step += 1;
                     }
@@ -280,63 +279,50 @@ impl Piece {
                         {
                             if seen_piece.color != self.color {
                                 let tg = (target_file as usize, target_rank as usize);
-                                targets.push(self.target_as_notation(tg, true, false));
+                                targets.push(MoveNotation::from_target(&self, tg, &board));
                             }
                         } else {
                             let tg = (target_file as usize, target_rank as usize);
-                            targets.push(self.target_as_notation(tg, false, false));
+                            targets.push(MoveNotation::from_target(&self, tg, &board));
                         }
                     }
                 }
             }
-            _ => {
-                //other pieces not implemented yet
-            }
         }
-        let clean_t: Vec<String> = targets
-            .iter_mut()
+        let clean_t: Vec<MoveNotation> = targets
+            .iter()
             .filter_map(|t| {
-                if board.move_causes_self_check(t.to_string()) {
-                    None
-                } else {
-                    Some(t.to_string())
+                let sim = board.simulate_move(&t);
+                let (a, b) = sim.is_in_check();
+                match (a, b) {
+                    (true, true) => {
+                        //no player can play a move that puts themselves in check
+                        None
+                    }
+                    (true, false) => {
+                        //white in check, if it is white's turn this move is invalid
+                        if self.color == PieceColor::White {
+                            None
+                        } else {
+                            Some(t.clone())
+                        }
+                    }
+                    (false, true) => {
+                        //black in check, if it is black's turn this move is invalid
+                        if self.color == PieceColor::Black {
+                            None
+                        } else {
+                            Some(t.clone())
+                        }
+                    }
+                    (false, false) => {
+                        //no check exists, this move is valid.
+                        Some(t.clone())
+                    }
                 }
             })
-            .collect::<Vec<String>>();
+            .collect::<Vec<MoveNotation>>();
         clean_t
-    }
-
-    fn target_as_notation(
-        &self,
-        target: (usize, usize),
-        is_capture: bool,
-        is_check: bool,
-    ) -> String {
-        let color = match self.color {
-            PieceColor::White => "W",
-            PieceColor::Black => "B",
-        };
-        let piece = match self.piece_type {
-            PieceType::Pawn => "P",
-            PieceType::Knight => "N",
-            PieceType::Bishop => "B",
-            PieceType::Rook => "R",
-            PieceType::Queen => "Q",
-            PieceType::King => "K",
-        };
-
-        let from_rank = (b'1' + self.position.1 as u8) as char;
-        let from_file = (b'a' + self.position.0 as u8) as char;
-
-        let opt_capture = if is_capture { "x" } else { "" };
-        let opt_check = if is_check { "+" } else { "" };
-
-        let file_char = (b'a' + target.0 as u8) as char;
-        let rank_char = (b'1' + target.1 as u8) as char;
-        format!(
-            "{}{}{}{}{}{}{}{}",
-            color, piece, from_rank, from_file, opt_capture, file_char, rank_char, opt_check
-        )
     }
 
     pub fn parse_move_notation(
@@ -369,19 +355,24 @@ impl Piece {
         };
         let from_rank = (chars[2] as u8 - b'1') as usize;
         let from_file = (chars[3] as u8 - b'a') as usize;
+        
 
         let is_check = chars.contains(&'+');
-        let is_capture = chars.contains(&'x');
-        let mut to_file = (chars[5] as u8 - b'a') as usize;
-        let mut to_rank = (chars[6] as u8 - b'1') as usize;
+        let is_capture = chars[4] == 'x';
+
+        let to_file;
+        let to_rank;
 
         if is_capture {
+            println!("Capture detected in notation: {}", notation);
             if chars.len() < 6 {
                 panic!("Invalid move notation for capture: {}", notation);
             }
-        } else {
             to_file = (chars[5] as u8 - b'a') as usize;
             to_rank = (chars[6] as u8 - b'1') as usize;
+        } else {
+            to_file = (chars[4] as u8 - b'a') as usize;
+            to_rank = (chars[5] as u8 - b'1') as usize;
         }
         return (
             color,
@@ -391,11 +382,6 @@ impl Piece {
             is_capture,
             is_check,
         );
-    }
-
-    pub fn test_check(self, color: PieceColor, tg: (usize, usize)) {
-        //this function will test if some move X will result in a check for the opponent
-
     }
 }
 
