@@ -7,6 +7,7 @@ use eframe::egui::{
 use egui_extras::image::load_image_bytes;
 
 use crate::{
+    Board,
     app::board::{self, MoveNotation},
 };
 
@@ -14,8 +15,8 @@ use crate::{
 pub struct Piece {
     pub piece_type: PieceType,
     pub color: PieceColor,
-    pub position: (usize, usize), // (file, rank)
-    pub targets: Vec<MoveNotation>,     //possible target squares
+    pub position: (usize, usize),   // (file, rank)
+    pub targets: Vec<MoveNotation>, //possible target squares
 }
 
 impl Piece {
@@ -69,17 +70,18 @@ impl Piece {
         }
     }
 
-    pub fn find_targets(self, board: board::Board) -> Vec<MoveNotation> {
+    pub fn find_targets(&self, board: Board) -> Vec<MoveNotation> {
         //find possible target squares for this piece
-        let direction: isize = match self.color {
-            PieceColor::White => 1,
-            PieceColor::Black => -1,
-        };
+
         let mut targets = vec![];
         let (file, rank) = self.position;
 
         match self.piece_type {
             PieceType::Pawn => {
+                let direction: isize = match self.color {
+                    PieceColor::White => 1,
+                    PieceColor::Black => -1,
+                };
                 //pawns move differently based on color
                 let forward_rank = (rank as isize + direction) as usize;
 
@@ -289,99 +291,58 @@ impl Piece {
                 }
             }
         }
-        let clean_t: Vec<MoveNotation> = targets
-            .iter()
-            .filter_map(|t| {
-                let sim = board.simulate_move(&t);
-                let (a, b) = sim.is_in_check();
-                match (a, b) {
-                    (true, true) => {
-                        //no player can play a move that puts themselves in check
-                        None
-                    }
-                    (true, false) => {
-                        //white in check, if it is white's turn this move is invalid
-                        if self.color == PieceColor::White {
-                            None
-                        } else {
-                            Some(t.clone())
-                        }
-                    }
-                    (false, true) => {
-                        //black in check, if it is black's turn this move is invalid
-                        if self.color == PieceColor::Black {
-                            None
-                        } else {
-                            Some(t.clone())
-                        }
-                    }
-                    (false, false) => {
-                        //no check exists, this move is valid.
-                        Some(t.clone())
-                    }
-                }
-            })
-            .collect::<Vec<MoveNotation>>();
-        clean_t
+
+        //for each target, if it results in a check for the opponent, mark it as such
+        for t in targets.iter_mut() {
+            t.apply_check_status(&board);
+        }
+        targets
     }
 
-    pub fn parse_move_notation(
-        notation: String,
-    ) -> (
-        PieceColor,
-        PieceType,
-        (usize, usize),
-        (usize, usize),
-        bool,
-        bool,
-    ) {
-        let chars: Vec<char> = notation.chars().collect();
-        if chars.len() < 4 {
-            panic!("Invalid move notation: {}", notation);
-        }
-        let color = match chars[0] {
-            'W' => PieceColor::White,
-            'B' => PieceColor::Black,
-            _ => panic!("Invalid color character: {}", chars[0]),
+    pub fn to_string(&self) -> String {
+        let icon = match (self.piece_type, self.color) {
+            (PieceType::Pawn, PieceColor::White) => "♙",
+            (PieceType::Knight, PieceColor::White) => "♘",
+            (PieceType::Bishop, PieceColor::White) => "♗",
+            (PieceType::Rook, PieceColor::White) => "♖",
+            (PieceType::Queen, PieceColor::White) => "♕",
+            (PieceType::King, PieceColor::White) => "♔",
+            (PieceType::Pawn, PieceColor::Black) => "♟",
+            (PieceType::Knight, PieceColor::Black) => "♞",
+            (PieceType::Bishop, PieceColor::Black) => "♝",
+            (PieceType::Rook, PieceColor::Black) => "♜",
+            (PieceType::Queen, PieceColor::Black) => "♛",
+            (PieceType::King, PieceColor::Black) => "♚",
         };
-        let piece = match chars[1] {
-            'P' => PieceType::Pawn,
-            'N' => PieceType::Knight,
-            'B' => PieceType::Bishop,
-            'R' => PieceType::Rook,
-            'Q' => PieceType::Queen,
-            'K' => PieceType::King,
-            _ => panic!("Invalid piece character: {}", chars[1]),
-        };
-        let from_rank = (chars[2] as u8 - b'1') as usize;
-        let from_file = (chars[3] as u8 - b'a') as usize;
-        
+        format!(
+            "{} at ({}, {})",
+            icon,
+            self.position.0,
+            self.position.1
+        )
+    }
 
-        let is_check = chars.contains(&'+');
-        let is_capture = chars[4] == 'x';
+    pub fn clean_self_checking_targets(&mut self, board: &Board) {
+        // remove any targets that would put this piece's own king in check
+        let mut valid_targets = Vec::new();
+        for t in &self.targets {
+            let mut sim_board = board.simulate_move(t);
+            let (white_in_check, black_in_check) = sim_board.is_in_check();
 
-        let to_file;
-        let to_rank;
-
-        if is_capture {
-            println!("Capture detected in notation: {}", notation);
-            if chars.len() < 6 {
-                panic!("Invalid move notation for capture: {}", notation);
+            match self.color {
+                PieceColor::White => {
+                    if !white_in_check {
+                        valid_targets.push(t.clone());
+                    }
+                }
+                PieceColor::Black => {
+                    if !black_in_check {
+                        valid_targets.push(t.clone());
+                    }
+                }
             }
-            to_file = (chars[5] as u8 - b'a') as usize;
-            to_rank = (chars[6] as u8 - b'1') as usize;
-        } else {
-            to_file = (chars[4] as u8 - b'a') as usize;
-            to_rank = (chars[5] as u8 - b'1') as usize;
         }
-        return (
-            color,
-            piece,
-            (from_file, from_rank),
-            (to_file, to_rank),
-            is_capture,
-            is_check,
-        );
+        self.targets = valid_targets;
     }
 }
 
