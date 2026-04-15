@@ -6,10 +6,7 @@ use eframe::egui::{
 };
 use egui_extras::image::load_image_bytes;
 
-use crate::{
-    Board,
-    app::board::{self, MoveNotation},
-};
+use crate::{Board, app::board::MoveNotation};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Piece {
@@ -70,231 +67,221 @@ impl Piece {
         }
     }
 
-    pub fn find_targets(&self, board: Board) -> Vec<MoveNotation> {
+    pub fn find_targets(&mut self, board: Board) {
         //find possible target squares for this piece
+
+        let mut targets = vec![];
+
+        let kind = self.piece_type;
+        match kind {
+            PieceType::Pawn => targets.append(self.pawn_targets(&board).as_mut()),
+            PieceType::Knight => targets.append(&mut self.knight_targets(&board).as_mut()),
+            PieceType::Rook => targets.append(self.rook_targets(&board).as_mut()),
+            PieceType::Bishop => targets.append(self.bishop_targets(&board).as_mut()),
+            PieceType::Queen => targets.append(self.queen_targets(&board).as_mut()),
+            PieceType::King => targets.append(&mut self.king_targets(&board).as_mut()),
+        }
+        self.targets = targets
+    }
+
+    fn king_targets(&self, board: &Board) -> Vec<MoveNotation> {
+        let mut targets = vec![];
+        let (file, rank) = self.position;
+
+        let king_moves = [
+            (1, 0),
+            (1, 1),
+            (0, 1),
+            (-1, 1),
+            (-1, 0),
+            (-1, -1),
+            (0, -1),
+            (1, -1),
+        ];
+
+        for km in king_moves {
+            let (df, dr) = km;
+            let target_file = file as isize + df;
+            let target_rank = rank as isize + dr;
+            if target_file >= 0 && target_file < 8 && target_rank >= 0 && target_rank < 8 {
+                if let Some(seen_piece) = board
+                    .pieces
+                    .get(&(target_file as usize, target_rank as usize))
+                {
+                    if seen_piece.color != self.color {
+                        let tg = (target_file as usize, target_rank as usize);
+                        targets.push(MoveNotation::from_target(&self, tg, &board));
+                    }
+                } else {
+                    let tg = (target_file as usize, target_rank as usize);
+                    targets.push(MoveNotation::from_target(&self, tg, &board));
+                }
+            }
+        }
+        targets
+    }
+
+    fn queen_targets(&self, board: &Board) -> Vec<MoveNotation> {
+        let mut targets = vec![];
+
+        targets.append(self.rook_targets(board).as_mut());
+        targets.append(self.bishop_targets(board).as_mut());
+
+        targets
+    }
+
+    fn rook_targets(&self, board: &Board) -> Vec<MoveNotation> {
+        let mut targets = vec![];
+        let (file, rank) = self.position;
+        //horizontal and vertical lines until blocked
+        let directions = [(1, 0), (-1, 0), (0, 1), (0, -1)];
+        for dir in directions.iter() {
+            let (df, dr) = *dir;
+            let mut step = 1;
+            loop {
+                let target_file = file as isize + df * step;
+                let target_rank = rank as isize + dr * step;
+                if target_file < 0 || target_file >= 8 || target_rank < 0 || target_rank >= 8 {
+                    break;
+                }
+                let target_pos = (target_file as usize, target_rank as usize);
+                if let Some(seen_piece) = board.pieces.get(&target_pos) {
+                    if seen_piece.color != self.color {
+                        let tg = (target_file as usize, target_rank as usize);
+                        targets.push(MoveNotation::from_target(&self, tg, &board));
+                    }
+                    break; //blocked by any piece
+                } else {
+                    let tg = (target_file as usize, target_rank as usize);
+                    targets.push(MoveNotation::from_target(&self, tg, &board));
+                }
+                step += 1;
+            }
+        }
+        targets
+    }
+
+    fn bishop_targets(&self, board: &Board) -> Vec<MoveNotation> {
+        let mut targets = vec![];
+        let (file, rank) = self.position;
+
+        //diagonal lines until blocked
+        let directions = [(1, 1), (1, -1), (-1, 1), (-1, -1)];
+        for dir in directions.iter() {
+            let (df, dr) = *dir;
+            let mut step = 1;
+            loop {
+                let target_file = file as isize + df * step;
+                let target_rank = rank as isize + dr * step;
+                if target_file < 0 || target_file >= 8 || target_rank < 0 || target_rank >= 8 {
+                    break;
+                }
+                let target_pos = (target_file as usize, target_rank as usize);
+                if let Some(seen_piece) = board.pieces.get(&target_pos) {
+                    if seen_piece.color != self.color {
+                        let tg = (target_file as usize, target_rank as usize);
+                        targets.push(MoveNotation::from_target(&self, tg, &board));
+                    }
+                    break; //blocked by any piece
+                } else {
+                    let tg = (target_file as usize, target_rank as usize);
+                    targets.push(MoveNotation::from_target(&self, tg, &board));
+                }
+                step += 1;
+            }
+        }
+        targets
+    }
+
+    fn knight_targets(&self, board: &Board) -> Vec<MoveNotation> {
+        let mut targets = vec![];
+
+        let (file, rank) = self.position;
+        let knight_moves = [
+            (2, 1),
+            (1, 2),
+            (-1, 2),
+            (-2, 1),
+            (-2, -1),
+            (-1, -2),
+            (1, -2),
+            (2, -1),
+        ];
+
+        for km in knight_moves {
+            let (df, dr) = (km.0, km.1);
+            let target_file = file as isize + df;
+            let target_rank = rank as isize + dr;
+            if target_file >= 0 && target_file < 8 && target_rank >= 0 && target_rank < 8 {
+                if let Some(seen_piece) = board
+                    .pieces
+                    .get(&(target_file as usize, target_rank as usize))
+                {
+                    if seen_piece.color != self.color {
+                        let tg = (target_file as usize, target_rank as usize);
+                        targets.push(MoveNotation::from_target(&self, tg, &board));
+                    }
+                } else {
+                    let tg = (target_file as usize, target_rank as usize);
+                    targets.push(MoveNotation::from_target(&self, tg, &board));
+                }
+            }
+        }
+        targets
+    }
+
+    fn pawn_targets(&self, board: &Board) -> Vec<MoveNotation> {
+        if self.piece_type != PieceType::Pawn {
+            panic!();
+        }
 
         let mut targets = vec![];
         let (file, rank) = self.position;
 
-        match self.piece_type {
-            PieceType::Pawn => {
-                let direction: isize = match self.color {
-                    PieceColor::White => 1,
-                    PieceColor::Black => -1,
-                };
-                //pawns move differently based on color
-                let forward_rank = (rank as isize + direction) as usize;
+        let direction: isize = match self.color {
+            PieceColor::White => 1,
+            PieceColor::Black => -1,
+        };
+        //pawns move differently based on color
+        let forward_rank = (rank as isize + direction) as usize;
 
-                if forward_rank < 8 {
-                    if board.pieces.get(&(file, forward_rank)).is_none() {
-                        //only add forward move if square is empty
-                        let tg = (file, forward_rank);
-                        targets.push(MoveNotation::from_target(&self, tg, &board));
-                    }
-                    //initial double move
-                    if (self.color == PieceColor::White && rank == 1)
-                        || (self.color == PieceColor::Black && rank == 6)
-                    {
-                        let double_forward_rank = (rank as isize + 2 * direction) as usize;
-                        if board.pieces.get(&(file, double_forward_rank)).is_none()
-                            && board.pieces.get(&(file, forward_rank)).is_none()
-                        {
-                            //only add forward move if square is empty
-                            let tg = (file, double_forward_rank);
-                            targets.push(MoveNotation::from_target(&self, tg, &board));
-                        }
-                    }
-                }
-
-                //captures
-                if file > 0 {
-                    if let Some(seen_piece) = board.pieces.get(&(file - 1, forward_rank)) {
-                        if seen_piece.color != self.color {
-                            let tg = (file - 1, forward_rank);
-                            targets.push(MoveNotation::from_target(&self, tg, &board));
-                        }
-                    }
-                }
-                if file < 8 {
-                    if let Some(seen_piece) = board.pieces.get(&(file + 1, forward_rank)) {
-                        if seen_piece.color != self.color {
-                            let tg = (file + 1, forward_rank);
-                            targets.push(MoveNotation::from_target(&self, tg, &board));
-                        }
-                    }
-                }
+        if forward_rank < 8 {
+            if board.pieces.get(&(file, forward_rank)).is_none() {
+                //only add forward move if square is empty
+                let tg = (file, forward_rank);
+                targets.push(MoveNotation::from_target(self, tg, &board));
             }
-            PieceType::Knight => {
-                let (file, rank) = self.position;
-                let knight_moves = [
-                    (2, 1),
-                    (1, 2),
-                    (-1, 2),
-                    (-2, 1),
-                    (-2, -1),
-                    (-1, -2),
-                    (1, -2),
-                    (2, -1),
-                ];
-
-                for km in knight_moves {
-                    let (df, dr) = (km.0, km.1);
-                    let target_file = file as isize + df;
-                    let target_rank = rank as isize + dr;
-                    if target_file >= 0 && target_file < 8 && target_rank >= 0 && target_rank < 8 {
-                        if let Some(seen_piece) = board
-                            .pieces
-                            .get(&(target_file as usize, target_rank as usize))
-                        {
-                            if seen_piece.color != self.color {
-                                let tg = (target_file as usize, target_rank as usize);
-                                targets.push(MoveNotation::from_target(&self, tg, &board));
-                            }
-                        } else {
-                            let tg = (target_file as usize, target_rank as usize);
-                            targets.push(MoveNotation::from_target(&self, tg, &board));
-                        }
-                    }
-                }
-            }
-            PieceType::Rook => {
-                //horizontal and vertical lines until blocked
-                let directions = [(1, 0), (-1, 0), (0, 1), (0, -1)];
-                for dir in directions.iter() {
-                    let (df, dr) = *dir;
-                    let mut step = 1;
-                    loop {
-                        let target_file = file as isize + df * step;
-                        let target_rank = rank as isize + dr * step;
-                        if target_file < 0
-                            || target_file >= 8
-                            || target_rank < 0
-                            || target_rank >= 8
-                        {
-                            break;
-                        }
-                        let target_pos = (target_file as usize, target_rank as usize);
-                        if let Some(seen_piece) = board.pieces.get(&target_pos) {
-                            if seen_piece.color != self.color {
-                                let tg = (target_file as usize, target_rank as usize);
-                                targets.push(MoveNotation::from_target(&self, tg, &board));
-                            }
-                            break; //blocked by any piece
-                        } else {
-                            let tg = (target_file as usize, target_rank as usize);
-                            targets.push(MoveNotation::from_target(&self, tg, &board));
-                        }
-                        step += 1;
-                    }
-                }
-            }
-            PieceType::Bishop => {
-                //diagonal lines until blocked
-                let directions = [(1, 1), (1, -1), (-1, 1), (-1, -1)];
-                for dir in directions.iter() {
-                    let (df, dr) = *dir;
-                    let mut step = 1;
-                    loop {
-                        let target_file = file as isize + df * step;
-                        let target_rank = rank as isize + dr * step;
-                        if target_file < 0
-                            || target_file >= 8
-                            || target_rank < 0
-                            || target_rank >= 8
-                        {
-                            break;
-                        }
-                        let target_pos = (target_file as usize, target_rank as usize);
-                        if let Some(seen_piece) = board.pieces.get(&target_pos) {
-                            if seen_piece.color != self.color {
-                                let tg = (target_file as usize, target_rank as usize);
-                                targets.push(MoveNotation::from_target(&self, tg, &board));
-                            }
-                            break; //blocked by any piece
-                        } else {
-                            let tg = (target_file as usize, target_rank as usize);
-                            targets.push(MoveNotation::from_target(&self, tg, &board));
-                        }
-                        step += 1;
-                    }
-                }
-            }
-            PieceType::Queen => {
-                //horizontal, vertical, and diagonal lines until blocked
-                let directions = [
-                    (1, 0),
-                    (-1, 0),
-                    (0, 1),
-                    (0, -1),
-                    (1, 1),
-                    (1, -1),
-                    (-1, 1),
-                    (-1, -1),
-                ];
-                for dir in directions.iter() {
-                    let (df, dr) = *dir;
-                    let mut step = 1;
-                    loop {
-                        let target_file = file as isize + df * step;
-                        let target_rank = rank as isize + dr * step;
-                        if target_file < 0
-                            || target_file >= 8
-                            || target_rank < 0
-                            || target_rank >= 8
-                        {
-                            break;
-                        }
-                        let target_pos = (target_file as usize, target_rank as usize);
-                        if let Some(seen_piece) = board.pieces.get(&target_pos) {
-                            if seen_piece.color != self.color {
-                                let tg = (target_file as usize, target_rank as usize);
-                                targets.push(MoveNotation::from_target(&self, tg, &board));
-                            }
-                            break; //blocked by any piece
-                        } else {
-                            let tg = (target_file as usize, target_rank as usize);
-                            targets.push(MoveNotation::from_target(&self, tg, &board));
-                        }
-                        step += 1;
-                    }
-                }
-            }
-            PieceType::King => {
-                let king_moves = [
-                    (1, 0),
-                    (1, 1),
-                    (0, 1),
-                    (-1, 1),
-                    (-1, 0),
-                    (-1, -1),
-                    (0, -1),
-                    (1, -1),
-                ];
-                for km in king_moves {
-                    let (df, dr) = km;
-                    let target_file = file as isize + df;
-                    let target_rank = rank as isize + dr;
-                    if target_file >= 0 && target_file < 8 && target_rank >= 0 && target_rank < 8 {
-                        if let Some(seen_piece) = board
-                            .pieces
-                            .get(&(target_file as usize, target_rank as usize))
-                        {
-                            if seen_piece.color != self.color {
-                                let tg = (target_file as usize, target_rank as usize);
-                                targets.push(MoveNotation::from_target(&self, tg, &board));
-                            }
-                        } else {
-                            let tg = (target_file as usize, target_rank as usize);
-                            targets.push(MoveNotation::from_target(&self, tg, &board));
-                        }
-                    }
+            //initial double move
+            if (self.color == PieceColor::White && rank == 1)
+                || (self.color == PieceColor::Black && rank == 6)
+            {
+                let double_forward_rank = (rank as isize + 2 * direction) as usize;
+                if board.pieces.get(&(file, double_forward_rank)).is_none()
+                    && board.pieces.get(&(file, forward_rank)).is_none()
+                {
+                    //only add forward move if square is empty
+                    let tg = (file, double_forward_rank);
+                    targets.push(MoveNotation::from_target(self, tg, &board));
                 }
             }
         }
 
-        //for each target, if it results in a check for the opponent, mark it as such
-        for t in targets.iter_mut() {
-            t.apply_check_status(&board);
+        //captures
+        if file > 0 {
+            if let Some(seen_piece) = board.pieces.get(&(file - 1, forward_rank)) {
+                if seen_piece.color != self.color {
+                    let tg = (file - 1, forward_rank);
+                    targets.push(MoveNotation::from_target(self, tg, &board));
+                }
+            }
+        }
+        if file < 8 {
+            if let Some(seen_piece) = board.pieces.get(&(file + 1, forward_rank)) {
+                if seen_piece.color != self.color {
+                    let tg = (file + 1, forward_rank);
+                    targets.push(MoveNotation::from_target(self, tg, &board));
+                }
+            }
         }
         targets
     }
@@ -307,6 +294,7 @@ impl Piece {
             (PieceType::Rook, PieceColor::White) => "♖",
             (PieceType::Queen, PieceColor::White) => "♕",
             (PieceType::King, PieceColor::White) => "♔",
+
             (PieceType::Pawn, PieceColor::Black) => "♟",
             (PieceType::Knight, PieceColor::Black) => "♞",
             (PieceType::Bishop, PieceColor::Black) => "♝",
@@ -314,12 +302,7 @@ impl Piece {
             (PieceType::Queen, PieceColor::Black) => "♛",
             (PieceType::King, PieceColor::Black) => "♚",
         };
-        format!(
-            "{} at ({}, {})",
-            icon,
-            self.position.0,
-            self.position.1
-        )
+        format!("{} at ({}, {})", icon, self.position.0, self.position.1)
     }
 
     pub fn clean_self_checking_targets(&mut self, board: &Board) {
@@ -329,20 +312,27 @@ impl Piece {
             let mut sim_board = board.simulate_move(t);
             let (white_in_check, black_in_check) = sim_board.is_in_check();
 
-            match self.color {
-                PieceColor::White => {
-                    if !white_in_check {
-                        valid_targets.push(t.clone());
-                    }
-                }
-                PieceColor::Black => {
-                    if !black_in_check {
-                        valid_targets.push(t.clone());
-                    }
-                }
+            if self.color == PieceColor::White && !white_in_check {
+                valid_targets.push(t.clone());
+            } else if self.color == PieceColor::Black && !black_in_check {
+                valid_targets.push(t.clone());
             }
         }
         self.targets = valid_targets;
+    }
+
+    pub fn apply_check_statuses(&mut self, board: &Board) {
+        for t in self.targets.iter_mut() {
+            let mut sim_board = board.simulate_move(&t);
+            let (white_in_check, black_in_check) = sim_board.is_in_check();
+
+            if self.color == PieceColor::White && black_in_check {
+                t.apply_check_status(&board);
+            }
+            if self.color == PieceColor::Black && white_in_check {
+                t.apply_check_status(&board);
+            }
+        }
     }
 }
 

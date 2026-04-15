@@ -1,11 +1,12 @@
 use crate::{
-    app::board::{self, piece::PieceType, Piece, PieceColor}, Board
+    Board,
+    app::board::{Piece, PieceColor, piece::PieceType},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct MoveNotation {
-    pub piece_color: PieceColor,
-    pub piece_type: PieceType,
+    pub moving_piece_color: PieceColor,
+    pub moving_piece_type: PieceType,
     pub from_file: usize,
     pub from_rank: usize,
     pub is_check: bool,
@@ -34,8 +35,8 @@ impl MoveNotation {
         }
 
         Self {
-            piece_color: piece.color,
-            piece_type: piece.piece_type,
+            moving_piece_color: piece.color,
+            moving_piece_type: piece.piece_type,
             from_file: piece.position.0,
             from_rank: piece.position.1,
             is_check,
@@ -47,25 +48,23 @@ impl MoveNotation {
     }
 
     pub fn to_string(&self) -> String {
-        let icon: String;
-        match (self.piece_color, self.piece_type) {
-            (PieceColor::White, PieceType::King) => icon = "♔".to_string(),
-            (PieceColor::White, PieceType::Queen) => icon = "♕".to_string(),
-            (PieceColor::White, PieceType::Rook) => icon = "♖".to_string(),
-            (PieceColor::White, PieceType::Bishop) => icon = "♗".to_string(),
-            (PieceColor::White, PieceType::Knight) => icon = "♘".to_string(),
-            (PieceColor::White, PieceType::Pawn) => icon = "♙".to_string(),
-            (PieceColor::Black, PieceType::King) => icon = "♚".to_string(),
-            (PieceColor::Black, PieceType::Queen) => icon = "♛".to_string(),
-            (PieceColor::Black, PieceType::Rook) => icon = "♜".to_string(),
-            (PieceColor::Black, PieceType::Bishop) => icon = "♝".to_string(),
-            (PieceColor::Black, PieceType::Knight) => icon = "♞".to_string(),
-            (PieceColor::Black, PieceType::Pawn) => icon = "♟".to_string(),
-        }
-
+        let icon: String = match (self.moving_piece_color, self.moving_piece_type) {
+            (PieceColor::White, PieceType::King) => "♔".to_string(),
+            (PieceColor::White, PieceType::Queen) => "♕".to_string(),
+            (PieceColor::White, PieceType::Rook) => "♖".to_string(),
+            (PieceColor::White, PieceType::Bishop) => "♗".to_string(),
+            (PieceColor::White, PieceType::Knight) => "♘".to_string(),
+            (PieceColor::White, PieceType::Pawn) => "♙".to_string(),
+            (PieceColor::Black, PieceType::King) => "♚".to_string(),
+            (PieceColor::Black, PieceType::Queen) => "♛".to_string(),
+            (PieceColor::Black, PieceType::Rook) => "♜".to_string(),
+            (PieceColor::Black, PieceType::Bishop) => "♝".to_string(),
+            (PieceColor::Black, PieceType::Knight) => "♞".to_string(),
+            (PieceColor::Black, PieceType::Pawn) => "♟".to_string(),
+        };
 
         format!(
-            "{}{}{}{}{}{}{}",
+            "{} {}{}{}{}{}{}",
             icon,
             Self::file_to_char(self.from_file),
             Self::rank_to_char(self.from_rank),
@@ -76,7 +75,7 @@ impl MoveNotation {
         )
     }
     fn file_to_char(file: usize) -> char {
-        let c= match file+1 {
+        let c = match file + 1 {
             1 => 'a',
             2 => 'b',
             3 => 'c',
@@ -90,7 +89,7 @@ impl MoveNotation {
         c
     }
     fn rank_to_char(file: usize) -> char {
-        let c= match file+1 {
+        let c = match file + 1 {
             1 => '1',
             2 => '2',
             3 => '3',
@@ -107,25 +106,25 @@ impl MoveNotation {
     pub fn targets_enemy(&self, board: &Board) -> Option<Piece> {
         let target_square = self.get_target_pos();
         if let Some(target_piece) = board.pieces.get(&target_square.to_pos()) {
-            if target_piece.color == self.piece_color && target_piece.piece_type == self.piece_type {
+            if target_piece.color != self.moving_piece_color {
                 return Some(target_piece.clone());
             }
         }
         None
     }
 
-    pub fn targets_enemy_king(&self, board: &Board) -> Option<Piece> {
-        if let Some(target_piece) = self.targets_enemy(board){
+    pub fn targets_enemy_king(&self, board: &Board) -> bool {
+        if let Some(target_piece) = self.targets_enemy(board) {
             if target_piece.piece_type == PieceType::King {
-                return Some(target_piece);
+                return true;
             }
         }
-        return None
+        return false;
     }
 
-    pub fn apply_check_status(&mut self, board: &Board){
+    pub fn apply_check_status(&mut self, board: &Board) {
         //determine if this move is targeting the opponent's king
-        self.is_check = self.targets_enemy_king(board).is_some();
+        self.is_check = self.targets_enemy_king(board);
     }
 
     pub fn to_tuple(
@@ -138,8 +137,8 @@ impl MoveNotation {
         bool,
         bool,
     ) {
-        let color = notation.piece_color;
-        let piece = notation.piece_type;
+        let color = notation.moving_piece_color;
+        let piece = notation.moving_piece_type;
         let from_file = notation.from_file;
         let from_rank = notation.from_rank;
         let to_file = notation.to_file;

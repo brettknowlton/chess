@@ -4,12 +4,11 @@ mod theme;
 use std::{collections::HashMap, path::PathBuf};
 
 pub use board::{Board, BoardWidget};
-use crossbeam::channel::{Receiver, Sender};
 pub use theme::SkeletonTheme;
 
 use eframe::{
     self,
-    egui::{self, Align2, Color32, FontId, Pos2},
+    egui::{self, Align2, Color32, FontId},
 };
 
 use serde;
@@ -43,16 +42,10 @@ pub struct MyApp {
     color_values: HashMap<String, Color32>,
     #[serde(skip)]
     available_themes: Vec<SkeletonTheme>,
-
-    #[serde(skip)]
-    pub event_sender: Sender<UiEvent>,
-    #[serde(skip)]
-    pub event_receiver: Receiver<UiEvent>,
 }
 
 impl Default for MyApp {
     fn default() -> Self {
-        let (event_sender, event_receiver) = crossbeam::channel::unbounded();
         Self {
             // Example stuff:
             label: "Hello World!".to_owned(),
@@ -67,9 +60,6 @@ impl Default for MyApp {
             color_values: HashMap::new(),
 
             available_themes: Vec::new(),
-
-            event_sender,
-            event_receiver,
         }
     }
 }
@@ -77,8 +67,7 @@ impl Default for MyApp {
 impl MyApp {
     /// Called once before the first frame.
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        let (event_sender, event_receiver) = crossbeam::channel::unbounded();
-        let mut new: Self;
+        let new: Self;
         if let Some(_) = cc.storage {
             new = Default::default();
             // eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default()
@@ -86,8 +75,6 @@ impl MyApp {
             new = Default::default();
         }
 
-        new.event_sender = event_sender;
-        new.event_receiver = event_receiver;
         let a = new.load_themes();
         a
     }
@@ -122,12 +109,6 @@ impl MyApp {
     }
 }
 
-#[derive(serde::Deserialize, serde::Serialize)]
-pub enum UiEvent {
-    ClickedGate(usize, Pos2, bool), // id of the gate that was clicked, its position, and if it was a primary click
-    ClickedWire(usize, Pos2, bool), // id of the wire that was clicked, its position, and if it was a primary click
-    ClickedIO(usize, Pos2, bool), // id of clicked input or output, its position, and if it was a primary click
-}
 
 impl eframe::App for MyApp {
     /// Called by the framework to save state before shutdown.

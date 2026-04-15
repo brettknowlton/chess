@@ -4,7 +4,6 @@ use std::collections::HashMap;
 use eframe::egui::{self, Align2, Color32, FontId, Grid, Rect, Sense, Widget};
 
 pub mod piece;
-use log::warn;
 pub use piece::{Piece, PieceColor, PieceTextures};
 
 pub mod notations;
@@ -114,16 +113,16 @@ impl Board {
         //for good measure, find all targets for all pieces first
         let (mut white_in_check, mut black_in_check) = (false, false);
         for piece in self.pieces.values() {
-            for t in &piece.clone().find_targets(self.clone()) {
-                if let Some(_) = t.targets_enemy_king(&self) {
+            for t in &piece.clone().targets {
+                if t.targets_enemy_king(&self) {
                     match piece.color {
                         PieceColor::White => {
-                            println!("White king is in check!");
-                            white_in_check = true;
-                        }
-                        PieceColor::Black => {
                             println!("Black king is in check!");
                             black_in_check = true;
+                        }
+                        PieceColor::Black => {
+                            println!("White king is in check!");
+                            white_in_check = true;
                         }
                     }
                 }
@@ -136,14 +135,14 @@ impl Board {
     /// Finds all targets for all pieces on the board and updates their target lists
     pub fn find_all_targets(&mut self) {
         //for each piece on the board, find its targets
-        let pieces_clone = self.pieces.clone();
-        for piece in pieces_clone.values() {
+        let mut pieces_clone = self.pieces.clone();
+        for piece in pieces_clone.values_mut() {
             //run with depth zero so we get all targets even if they are checking as to not cause a recursion loop
-            let targets = Piece::find_targets(piece, self.clone());
-            self.pieces.get_mut(&piece.position).unwrap().targets = targets;
+            piece.find_targets(self.clone());
+            self.pieces.get_mut(&piece.position).unwrap().targets = piece.targets.clone();
         }
     }
-    
+
     ///takes in a move notation string like "Pe2e4" or "Nf3xd4" and returns a new Board with the move applied (clones self first as to not mutate self)
     pub fn simulate_move(&self, info: &MoveNotation) -> Self {
         let mut sim_board = self.clone();
@@ -237,60 +236,83 @@ impl<'a> BoardWidget<'a> {
             {
                 //the piece we clicked on IS the color whose turn it is
                 //so: select this piece
-                self.board.selected_piece = Some(SelectedPiece::Selected(col, row));
 
                 //load this piece's targets because we just selected it
-                self.board.find_all_targets();
                 let mut selected_piece = self.board.pieces.get(&(col, row)).unwrap().clone();
+
+                self.board.find_all_targets();
+
                 selected_piece.clean_self_checking_targets(&self.board);
+
+                selected_piece.apply_check_statuses(&self.board);
+
+                if let Some(piece) = self.board.pieces.get_mut(&(col, row)) {
+                    piece.targets = selected_piece.targets.clone();
+                }
+
+                self.board.selected_piece = Some(SelectedPiece::Selected(col, row));
 
                 println!("Selected piece at index ({}{})", col, row);
             } else {
                 //we clicked on a piece of the other color
                 //so: check if this square is a valid target for the selected piece
+
+                //first, do we have a selected piece?
                 if let Some(SelectedPiece::Selected(idx, idy)) = &self.board.selected_piece {
                     //we have a selected piece
-                    //so:
-                    let selected_piece = self.board.pieces.get(&(*idx, *idy)).unwrap().clone();
+                    //so: get the raw selected piece
+                    let mut selected_piece = self.board.pieces.get(&(*idx, *idy)).unwrap().clone();
+                    selected_piece.clean_self_checking_targets(&self.board);
 
                     //check if the clicked square is a valid target for the selected piece
-                    selected_piece.targets.iter().for_each(|t| {
-                        if t.get_target_pos() == SquareNotation::from((col, row)) {
-                            //this is a valid target for this piece
-                            //so: capture the piece and send it to the graveyard
-                            self.board.make_move(t.clone());
-                        } else {
-                            println!(
-                                "Invalid move to ({}, {}) for selected piece, deselecting",
-                                col, row
-                            );
-                        }
-                        self.board.selected_piece = None;
-                    });
-                };
-            }
-        } else {
-            //there is not a piece in this square
-            //so: check if this square is a valid target for the selected piece
-            if let Some(SelectedPiece::Selected(idx, idy)) = &self.board.selected_piece {
-                let selected_piece = self.board.pieces.get(&(*idx, *idy)).unwrap().clone();
-
-                selected_piece.targets.iter().for_each(|t| {
-                    if t.get_target_pos() == SquareNotation::from((col, row)) {
+                    if let Some(item) = selected_piece
+                        .targets
+                        .iter()
+                        .find(|t| t.get_target_pos() == SquareNotation::from((col, row)))
+                    {
                         //this is a valid target for this piece
-                        //so: capture the piece and send it to the graveyard
-                        self.board.make_move(t.clone());
+                        //so: move the piece and capture if necessary
+                        self.board.make_move(item.clone());
+                        self.board.selected_piece = None;
+                        return;
                     } else {
                         println!(
                             "Invalid move to ({}, {}) for selected piece, deselecting",
                             col, row
                         );
+                        self.board.selected_piece = None;
                     }
-                    self.board.selected_piece = None;
-                });
-            } else {
-                println!("No piece at ({}, {}) and no piece is selected.", col, row);
+                };
             }
+        } else {
+            //there is not a piece in this square
+            //so: check if this square is a valid target for the selected piece
+            //first, do we have a selected piece?
+            if let Some(SelectedPiece::Selected(idx, idy)) = &self.board.selected_piece {
+                //we have a selected piece
+                //so: get the raw selected piece
+                let mut selected_piece = self.board.pieces.get(&(*idx, *idy)).unwrap().clone();
+                selected_piece.clean_self_checking_targets(&self.board);
+
+                //check if the clicked square is a valid target for the selected piece
+                if let Some(item) = selected_piece
+                    .targets
+                    .iter()
+                    .find(|t| t.get_target_pos() == SquareNotation::from((col, row)))
+                {
+                    //this is a valid target for this piece
+                    //so: move the piece and capture if necessary
+                    self.board.make_move(item.clone());
+                    self.board.selected_piece = None;
+                    return;
+                } else {
+                    println!(
+                        "Invalid move to ({}, {}) for selected piece, deselecting",
+                        col, row
+                    );
+                    self.board.selected_piece = None;
+                }
+            };
         }
     }
 }
@@ -352,25 +374,24 @@ impl<'a> Widget for BoardWidget<'a> {
                                     //use the blended color
                                     square_color = blended_color;
                                 }
+                            }
+                            //if this square is a target for the selected piece, highlight it yellow
+                            if let Some(SelectedPiece::Selected(idx, idy)) =
+                                &self.board.selected_piece
+                            {
+                                let piece = self.board.pieces.get(&(*idx, *idy)).unwrap();
 
-                                //if this square is a target for the selected piece, highlight it yellow
-                                if let Some(SelectedPiece::Selected(idx, idy)) =
-                                    &self.board.selected_piece
-                                {
-                                    let piece = self.board.pieces.get(&(*idx, *idy)).unwrap();
-
-                                    for t in &piece.targets {
-                                        if t.get_target_pos() == square_notation {
-                                            //highlight square yellow
-                                            //blend the colors
-                                            let r = (square_color.r() as u16 + 0x00FF00u16) / 2;
-                                            let g = (square_color.g() as u16 + 0x00FF00u16) / 2;
-                                            let b = (square_color.b() as u16 + 0x000000u16) / 2;
-                                            let blended_color =
-                                                Color32::from_rgb(r as u8, g as u8, b as u8);
-                                            //use the blended color
-                                            square_color = blended_color;
-                                        }
+                                for t in &piece.targets {
+                                    if t.get_target_pos() == square_notation {
+                                        //highlight square yellow
+                                        //blend the colors
+                                        let r = (square_color.r() as u16 + 0x00FF00u16) / 2;
+                                        let g = (square_color.g() as u16 + 0x00FF00u16) / 2;
+                                        let b = (square_color.b() as u16 + 0x000000u16) / 2;
+                                        let blended_color =
+                                            Color32::from_rgb(r as u8, g as u8, b as u8);
+                                        //use the blended color
+                                        square_color = blended_color;
                                     }
                                 }
                             }
