@@ -13,7 +13,7 @@ use eframe::{
 
 use serde;
 
-use crate::app::board::SelectedPiece;
+use crate::app::board::{piece::PieceTrait, position::Position};
 
 static mut ID_COUNTER: usize = 0;
 
@@ -109,7 +109,6 @@ impl MyApp {
     }
 }
 
-
 impl eframe::App for MyApp {
     /// Called by the framework to save state before shutdown.
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
@@ -162,25 +161,29 @@ impl eframe::App for MyApp {
 
                 egui::SidePanel::right("InfoPanel")
                     .default_width(150.0)
-                    .resizable(false)
+                    .resizable(true)
                     .show(ctx, |ui| {
                         ui.vertical(|ui| {
                             ui.heading("Info");
                             if let Some(board) = &self.board_state {
-                                if let Some(SelectedPiece::Selected(idx, idy)) =
-                                    &board.selected_piece
-                                {
-                                    let selected = board.pieces.get(&(*idx, *idy)).unwrap();
+                                if let Some(selected) = board.pieces.get(
+                                    &board
+                                        .selected_piece_location()
+                                        .unwrap_or(Position::new('a', 0)),
+                                ) {
                                     ui.label(format!(
-                                        "Selected Piece: {:?} {:?} at ({}, {})",
-                                        selected.color,
-                                        selected.piece_type,
-                                        selected.position.0,
-                                        selected.position.1
+                                        "Selected Piece: {:?} {:?} at ({})\nAvailable Moves: {:?}",
+                                        selected.get_color(),
+                                        selected.get_type(),
+                                        selected.get_position(),
+                                        board.selected_legal_targets()
                                     ));
                                 }
                             } else {
                                 ui.label("No piece selected");
+                            }
+                            if let Some(board) = &self.board_state {
+                                ui.label(format!("Board Notation: \n{}", board.to_notation()));
                             }
                         });
                     });

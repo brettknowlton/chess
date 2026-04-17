@@ -3,21 +3,24 @@ use std::collections::HashMap;
 
 use eframe::egui::{self, Align2, Color32, FontId, Grid, Rect, Sense, Widget};
 
-pub mod piece;
+pub mod position;
 pub use piece::{Piece, PieceColor, PieceTextures};
+pub use position::Position;
+pub mod piece;
 
 pub mod notations;
 pub use notations::MoveNotation;
 
-use crate::app::board::{notations::SquareNotation, piece::PieceType};
+use crate::app::board::piece::{PieceTrait, PieceType};
 
 #[derive(Clone)]
 pub struct Board {
-    pub pieces: HashMap<(usize, usize), Piece>,
+    pub pieces: HashMap<Position, Piece>,
     pub piece_graveyard: Vec<Piece>,
     pub textures: PieceTextures,
     pub turn: GameTurn,
-    pub selected_piece: Option<SelectedPiece>,
+    pub selected_piece_location: Option<Position>,
+    pub selected_targets: Vec<MoveNotation>,
 }
 
 impl Board {
@@ -32,42 +35,73 @@ impl Board {
             piece_graveyard: Vec::new(),
             textures: PieceTextures::load_from_disk(),
             turn: GameTurn::default(),
-            selected_piece: None,
+            selected_piece_location: None,
+            selected_targets: Vec::new(),
         }
     }
 
-    pub fn file_to_char(file: usize) -> char {
-        match file {
-            0 => 'a',
-            1 => 'b',
-            2 => 'c',
-            3 => 'd',
-            4 => 'e',
-            5 => 'f',
-            6 => 'g',
-            7 => 'h',
-            _ => panic!("Invalid file index"),
+    pub fn is_check_mate(&self) -> Option<PieceColor> {
+        //check if the current player is in check, and if they have any legal moves to get out of check
+        let current_color = match self.turn {
+            GameTurn::WhiteTurn => PieceColor::White,
+            GameTurn::BlackTurn => PieceColor::Black,
+        };
+        let current_color_in_check = self.is_in_check(current_color);
+        if !current_color_in_check {
+            return None;
+        }
+
+        //if we are in check, do we have any legal moves to get out of check?
+        for piece in self.pieces.values() {
+            if piece.get_color()
+                == match self.turn {
+                    GameTurn::WhiteTurn => PieceColor::White,
+                    GameTurn::BlackTurn => PieceColor::Black,
+                }
+            {
+                if !self.legal_targets_for(piece).is_empty() {
+                    return None;
+                }
+            }
+        }
+
+        match self.turn {
+            GameTurn::WhiteTurn => Some(PieceColor::White),
+            GameTurn::BlackTurn => Some(PieceColor::Black),
         }
     }
 
-    pub fn rank_to_char(rank: usize) -> char {
-        match rank {
-            0 => '1',
-            1 => '2',
-            2 => '3',
-            3 => '4',
-            4 => '5',
-            5 => '6',
-            6 => '7',
-            7 => '8',
-            _ => panic!("Invalid rank index"),
-        }
+    pub fn to_notation(&self) -> String {
+        //generate a notation string like "Pe2e4,Ng1f3,Bf1c4" from the current board state
+        self.pieces
+            .values()
+            .map(|piece| {
+                let color_char = match piece.get_color() {
+                    PieceColor::White => 'W',
+                    PieceColor::Black => 'B',
+                };
+                let piece_char = match piece.get_type() {
+                    PieceType::Pawn => 'P',
+                    PieceType::Knight => 'N',
+                    PieceType::Bishop => 'B',
+                    PieceType::Rook => 'R',
+                    PieceType::Queen => 'Q',
+                    PieceType::King => 'K',
+                };
+
+                let file_char = piece.get_position().file;
+                let rank_char = piece.get_position().rank;
+
+                format!("{}{}{}{}", color_char, piece_char, file_char, rank_char)
+            })
+            .collect::<Vec<String>>()
+            .join(",")
     }
 
     ///takes in a notation string like "Pe2e4,Ng1f3,Bf1c4" and generates a list of pieces from it
-    pub fn generate_from_notation(notation: &str) -> HashMap<(usize, usize), Piece> {
+    pub fn generate_from_notation(notation: &str) -> HashMap<Position, Piece> {
         //parse the notation string and generate pieces
-        let pieces = notation
+        let pieces: HashMap<Position, Piece> = notation
             .split(',')
             .map(|s| {
                 println!("Adding piece from notation: {}", s);
@@ -91,116 +125,147 @@ impl Board {
                 let file_char = s[2..3].chars().next().unwrap();
                 let rank_char = s[3..4].chars().next().unwrap();
 
-                let new_p = Piece {
+                let new_p = Piece::new(
                     piece_type,
                     color,
-                    position: (
-                        (file_char as u8 - b'a') as usize,
-                        (rank_char.to_digit(10).unwrap() - 1) as usize,
-                    ),
-                    targets: Vec::new(),
-                };
+                    Position::new(file_char, (rank_char.to_digit(10).unwrap()) as u8),
+                );
 
-                (new_p.position, new_p)
+                (new_p.get_position(), new_p)
             })
             .collect();
         pieces
     }
 
-    /// Returns (white_in_check, black_in_check), true if that color's king is in check for this board
-    fn is_in_check(&mut self) -> (bool, bool) {
-        //check if this color's king is being targeted by any opponent pieces
-        //for good measure, find all targets for all pieces first
-        let (mut white_in_check, mut black_in_check) = (false, false);
-        for piece in self.pieces.values() {
-            for t in &piece.clone().targets {
-                if t.targets_enemy_king(&self) {
-                    match piece.color {
-                        PieceColor::White => {
-                            println!("Black king is in check!");
-                            black_in_check = true;
-                        }
-                        PieceColor::Black => {
-                            println!("White king is in check!");
-                            white_in_check = true;
-                        }
-                    }
-                }
-            }
-        }
+    /// Returns true if the specified color's king is in check for this board
+    fn is_in_check(&self, color: PieceColor) -> bool {
+        let king_position = self
+            .pieces
+            .values()
+            .find(|piece| piece.get_color() == color && piece.get_type() == PieceType::King)
+            .map(|piece| piece.get_position());
 
-        (white_in_check, black_in_check)
+        let Some(king_position) = king_position else {
+            panic!("No king found for color {:?}", color);
+        };
+
+        self.pieces
+            .values()
+            .filter(|piece| piece.get_color() != color)
+            .any(|piece| {
+                self.pseudo_targets_for(piece)
+                    .iter()
+                    .any(|movement| movement.targets_square(&king_position))
+            })
     }
 
-    /// Finds all targets for all pieces on the board and updates their target lists
-    pub fn find_all_targets(&mut self) {
-        //for each piece on the board, find its targets
-        let mut pieces_clone = self.pieces.clone();
-        for piece in pieces_clone.values_mut() {
-            //run with depth zero so we get all targets even if they are checking as to not cause a recursion loop
-            piece.find_targets(self.clone());
-            self.pieces.get_mut(&piece.position).unwrap().targets = piece.targets.clone();
-        }
+    fn pseudo_targets_for(&self, piece: &Piece) -> Vec<MoveNotation> {
+        piece.pseudo_targets(self)
+    }
+
+    fn move_leaves_own_king_in_check(&self, piece_color: PieceColor, info: &MoveNotation) -> bool {
+        let simulated_board = self.simulate_move(info);
+        simulated_board.is_in_check(piece_color)
+    }
+
+    fn move_puts_enemy_in_check(&self, piece_color: PieceColor, info: &MoveNotation) -> bool {
+        let simulated_board = self.simulate_move(info);
+        let enemy_color = match piece_color {
+            PieceColor::White => PieceColor::Black,
+            PieceColor::Black => PieceColor::White,
+        };
+        simulated_board.is_in_check(enemy_color)
+    }
+
+    pub fn legal_targets_for(&self, piece: &Piece) -> Vec<MoveNotation> {
+        let mut items = self.pseudo_targets_for(piece);
+        let cleaned_items = items
+            .iter_mut()
+            .filter_map(|target| {
+                if self.move_leaves_own_king_in_check(piece.get_color(), target) {
+                    target.is_self_check = true;
+                    return None;
+                }
+
+                target.is_check = self.move_puts_enemy_in_check(piece.get_color(), target);
+                Some(target.clone())
+            })
+            .collect::<Vec<MoveNotation>>();
+        cleaned_items
+    }
+
+    pub fn select_piece(&mut self, piece: &Piece) {
+        self.selected_targets = self.legal_targets_for(piece);
+        self.selected_piece_location = Some(piece.get_position());
+    }
+
+    pub fn clear_selection(&mut self) {
+        self.selected_piece_location = None;
+        self.selected_targets.clear();
+    }
+
+    pub fn selected_piece_location(&self) -> Option<Position> {
+        self.selected_piece_location
+    }
+
+    pub fn selected_legal_targets(&self) -> Vec<MoveNotation> {
+        self.selected_targets.clone()
+    }
+
+    pub fn selected_move_to(&self, position: Position) -> Option<MoveNotation> {
+        self.selected_legal_targets()
+            .iter()
+            .find(|target| target.get_target_pos() == position)
+            .cloned()
     }
 
     ///takes in a move notation string like "Pe2e4" or "Nf3xd4" and returns a new Board with the move applied (clones self first as to not mutate self)
     pub fn simulate_move(&self, info: &MoveNotation) -> Self {
         let mut sim_board = self.clone();
-        print!("Simulating move: ");
-        sim_board.make_move(info.clone());
-        println!("\nrefreshing sim_board");
-        sim_board.find_all_targets();
+        sim_board.apply_move(info, false);
         sim_board
     }
 
-    ///make a move on the board, updating pieces, graveyard, turn, and selected_piece
-    pub fn make_move(&mut self, info: MoveNotation) {
-        //make a move on the board
-        print!("{} ", info.to_string());
+    ///make a move on the calling board, updating pieces, graveyard, turn, and selected_piece
+    pub fn make_move(&mut self, info: &MoveNotation) {
+        self.apply_move(info, true);
+    }
 
-        let mut moved_piece = self
-            .pieces
-            .get(&(info.from_file, info.from_rank))
-            .unwrap()
-            .clone();
-        moved_piece.position = (info.to_file, info.to_rank);
-        moved_piece.targets = Vec::new();
-        self.pieces.remove(&(info.from_file, info.from_rank));
+    fn apply_move(&mut self, info: &MoveNotation, log_move: bool) {
+        //make a move on the board
+        if log_move {
+            print!("{} ", info.to_string());
+        }
+
+        let mut moved_piece = self.pieces.get(&info.moving_from_position).unwrap().clone();
+        moved_piece.set_position(info.moving_to_position);
+        self.pieces.remove(&info.moving_from_position);
 
         if !info.is_capture {
             //just move the piece
-            self.pieces
-                .insert((info.to_file, info.to_rank), moved_piece);
+            self.pieces.insert(info.moving_to_position, moved_piece);
             //deselect the piece
-            self.selected_piece = None;
-            //change turn
-            self.turn = match self.turn {
-                GameTurn::WhiteTurn => GameTurn::BlackTurn,
-                GameTurn::BlackTurn => GameTurn::WhiteTurn,
-            };
-            return;
+            self.clear_selection();
         } else {
             //capture the piece at the destination square
-            if !self.pieces.contains_key(&(info.to_file, info.to_rank)) {
-                panic!(
-                    "No piece to capture at ({}, {})",
-                    info.to_file, info.to_rank
-                );
+            if !self.pieces.contains_key(&info.moving_to_position) {
+                panic!("No piece to capture at ({})", info.moving_to_position);
             }
-            let captured_piece = self.pieces.remove(&(info.to_file, info.to_rank)).unwrap();
+            let captured_piece = self.pieces.remove(&info.moving_to_position).unwrap();
             self.piece_graveyard.push(captured_piece);
-            print!(": Captured piece: ({}{})", info.to_file, info.to_rank);
+            if log_move {
+                print!(": Captured piece: ({})", info.moving_to_position,);
+            }
 
-            self.pieces
-                .insert((info.to_file, info.to_rank), moved_piece);
+            self.pieces.insert(info.moving_to_position, moved_piece);
             //deselect the piece
-            self.selected_piece = None;
-            //change turn
-            self.turn = match self.turn {
-                GameTurn::WhiteTurn => GameTurn::BlackTurn,
-                GameTurn::BlackTurn => GameTurn::WhiteTurn,
-            };
+            self.clear_selection();
         }
+        //change turn
+        self.turn = match self.turn {
+            GameTurn::WhiteTurn => GameTurn::BlackTurn,
+            GameTurn::BlackTurn => GameTurn::WhiteTurn,
+        };
     }
 }
 
@@ -224,11 +289,14 @@ impl<'a> BoardWidget<'a> {
         self
     }
 
-    fn click_on(&mut self, row: usize, col: usize) {
-        if let Some(piece) = self.board.pieces.get(&(col, row)) {
+    fn click_on(&mut self, pos: Position) {
+        //first off- are we clicking on a piece or an empty square?
+        if let Some(piece) = self.board.clone().pieces.get(&pos) {
             //there is a piece in this square
-            println!("Clicked on piece: {:?} at ({}, {})", piece, col, row);
-            if piece.color
+            println!("Clicked on piece:  at ({})", pos);
+
+            //is this piece the color of the player whose turn it is?
+            if piece.get_color()
                 == match self.board.turn {
                     GameTurn::WhiteTurn => PieceColor::White,
                     GameTurn::BlackTurn => PieceColor::Black,
@@ -237,50 +305,35 @@ impl<'a> BoardWidget<'a> {
                 //the piece we clicked on IS the color whose turn it is
                 //so: select this piece
 
-                //load this piece's targets because we just selected it
-                let mut selected_piece = self.board.pieces.get(&(col, row)).unwrap().clone();
+                self.board.select_piece(piece);
 
-                self.board.find_all_targets();
-
-                selected_piece.clean_self_checking_targets(&self.board);
-
-                selected_piece.apply_check_statuses(&self.board);
-
-                if let Some(piece) = self.board.pieces.get_mut(&(col, row)) {
-                    piece.targets = selected_piece.targets.clone();
-                }
-
-                self.board.selected_piece = Some(SelectedPiece::Selected(col, row));
-
-                println!("Selected piece at index ({}{})", col, row);
+                println!("Selected piece at index ({})", pos);
             } else {
                 //we clicked on a piece of the other color
                 //so: check if this square is a valid target for the selected piece
 
                 //first, do we have a selected piece?
-                if let Some(SelectedPiece::Selected(idx, idy)) = &self.board.selected_piece {
+                if self.board.selected_piece_location.is_some() {
                     //we have a selected piece
-                    //so: get the raw selected piece
-                    let mut selected_piece = self.board.pieces.get(&(*idx, *idy)).unwrap().clone();
-                    selected_piece.clean_self_checking_targets(&self.board);
-
                     //check if the clicked square is a valid target for the selected piece
-                    if let Some(item) = selected_piece
-                        .targets
-                        .iter()
-                        .find(|t| t.get_target_pos() == SquareNotation::from((col, row)))
-                    {
+                    if let Some(item) = self.board.selected_move_to(pos) {
                         //this is a valid target for this piece
                         //so: move the piece and capture if necessary
-                        self.board.make_move(item.clone());
-                        self.board.selected_piece = None;
+                        self.board.make_move(&item);
+                        self.board.clear_selection();
+                        if let Some(winner) = self.board.is_check_mate() {
+                            println!(
+                                "Checkmate! {} wins!",
+                                match winner {
+                                    PieceColor::White => "White",
+                                    PieceColor::Black => "Black",
+                                }
+                            );
+                        }
                         return;
                     } else {
-                        println!(
-                            "Invalid move to ({}, {}) for selected piece, deselecting",
-                            col, row
-                        );
-                        self.board.selected_piece = None;
+                        println!("Invalid move to ({}) for selected piece, deselecting", pos);
+                        self.board.clear_selection();
                     }
                 };
             }
@@ -288,29 +341,27 @@ impl<'a> BoardWidget<'a> {
             //there is not a piece in this square
             //so: check if this square is a valid target for the selected piece
             //first, do we have a selected piece?
-            if let Some(SelectedPiece::Selected(idx, idy)) = &self.board.selected_piece {
+            if self.board.selected_piece_location.is_some() {
                 //we have a selected piece
-                //so: get the raw selected piece
-                let mut selected_piece = self.board.pieces.get(&(*idx, *idy)).unwrap().clone();
-                selected_piece.clean_self_checking_targets(&self.board);
-
                 //check if the clicked square is a valid target for the selected piece
-                if let Some(item) = selected_piece
-                    .targets
-                    .iter()
-                    .find(|t| t.get_target_pos() == SquareNotation::from((col, row)))
-                {
+                if let Some(item) = self.board.selected_move_to(pos) {
                     //this is a valid target for this piece
                     //so: move the piece and capture if necessary
-                    self.board.make_move(item.clone());
-                    self.board.selected_piece = None;
+                    self.board.make_move(&item);
+                    self.board.clear_selection();
+                    if let Some(winner) = self.board.is_check_mate() {
+                        println!(
+                            "Checkmate! {} wins!",
+                            match winner {
+                                PieceColor::White => "White",
+                                PieceColor::Black => "Black",
+                            }
+                        );
+                    }
                     return;
                 } else {
-                    println!(
-                        "Invalid move to ({}, {}) for selected piece, deselecting",
-                        col, row
-                    );
-                    self.board.selected_piece = None;
+                    println!("Invalid move to ({}) for selected piece, deselecting", pos);
+                    self.board.clear_selection();
                 }
             };
         }
@@ -321,6 +372,8 @@ impl<'a> Widget for BoardWidget<'a> {
     fn ui(mut self, ui: &mut egui::Ui) -> egui::Response {
         let square_size = self.square_size;
         let mut total_rect: Option<Rect> = None;
+        let selected_position = self.board.selected_piece_location();
+        let selected_targets = self.board.selected_legal_targets().to_vec();
 
         ui.centered_and_justified(|ui| {
             Grid::new("chess_grid")
@@ -350,7 +403,7 @@ impl<'a> Widget for BoardWidget<'a> {
 
                         // 8 board squares with pieces and click handling
                         for col in 0..8 {
-                            let square_notation = SquareNotation::from((col, row));
+                            let square_position = Position::from_coordinates(col, row);
 
                             let is_light_square = (row + col) % 2 == 0;
                             let mut square_color = if is_light_square {
@@ -360,10 +413,8 @@ impl<'a> Widget for BoardWidget<'a> {
                             };
 
                             //if this square is the one with the selected piece, highlight it green
-                            if let Some(SelectedPiece::Selected(idx, idy)) =
-                                &self.board.selected_piece
-                            {
-                                if (idx, idy) == (&col, &row) {
+                            if let Some(selected_position) = selected_position {
+                                if selected_position == square_position {
                                     //highlight square green
                                     //blend the colors
                                     let r = (square_color.r() as u16 + 0x008800u16) / 2;
@@ -376,23 +427,17 @@ impl<'a> Widget for BoardWidget<'a> {
                                 }
                             }
                             //if this square is a target for the selected piece, highlight it yellow
-                            if let Some(SelectedPiece::Selected(idx, idy)) =
-                                &self.board.selected_piece
-                            {
-                                let piece = self.board.pieces.get(&(*idx, *idy)).unwrap();
-
-                                for t in &piece.targets {
-                                    if t.get_target_pos() == square_notation {
-                                        //highlight square yellow
-                                        //blend the colors
-                                        let r = (square_color.r() as u16 + 0x00FF00u16) / 2;
-                                        let g = (square_color.g() as u16 + 0x00FF00u16) / 2;
-                                        let b = (square_color.b() as u16 + 0x000000u16) / 2;
-                                        let blended_color =
-                                            Color32::from_rgb(r as u8, g as u8, b as u8);
-                                        //use the blended color
-                                        square_color = blended_color;
-                                    }
+                            for t in &selected_targets {
+                                if t.get_target_pos() == square_position {
+                                    //highlight square yellow
+                                    //blend the colors
+                                    let r = (square_color.r() as u16 + 0x00FF00u16) / 2;
+                                    let g = (square_color.g() as u16 + 0x00FF00u16) / 2;
+                                    let b = (square_color.b() as u16 + 0x000000u16) / 2;
+                                    let blended_color =
+                                        Color32::from_rgb(r as u8, g as u8, b as u8);
+                                    //use the blended color
+                                    square_color = blended_color;
                                 }
                             }
 
@@ -407,14 +452,14 @@ impl<'a> Widget for BoardWidget<'a> {
 
                             // Draw piece as an overlay using painter and cached textures (no layout impact)
                             for (id, piece) in &self.board.pieces {
-                                if (id.0, id.1) == (col, row) {
+                                if *id == square_position {
                                     piece.paint(ui, rect, &mut self.board.textures);
                                 }
                             }
 
                             // Handle click events (only for real board squares)
                             if response.clicked() {
-                                self.click_on(row, col);
+                                self.click_on(square_position);
                             }
                         }
                         ui.end_row();
@@ -465,10 +510,4 @@ pub enum GameTurn {
     #[default]
     WhiteTurn,
     BlackTurn,
-}
-
-#[derive(Clone)]
-pub enum SelectedPiece {
-    None,
-    Selected(usize, usize), //index of the piece in the pieces vector
 }
